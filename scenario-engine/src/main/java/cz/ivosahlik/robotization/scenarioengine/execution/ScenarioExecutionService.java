@@ -10,6 +10,7 @@ import cz.ivosahlik.robotization.scenarioengine.scenario.AbstractScenario;
 import cz.ivosahlik.robotization.scenarioengine.scenario.Scenario;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
@@ -43,6 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </ul>
  */
 @Slf4j
+@RequiredArgsConstructor
 @Service
 public class ScenarioExecutionService {
 
@@ -62,24 +64,6 @@ public class ScenarioExecutionService {
     private ScheduledExecutorService dispatcher;
 
     private final String hostname = resolveHostname();
-
-    // ── Constructor ───────────────────────────────────────────────────────────
-
-    public ScenarioExecutionService(
-            ScenarioExecutionRepository executionRepo,
-            ScenarioRegistry scenarioRegistry,
-            ConcurrencyGuard concurrencyGuard,
-            ReportingService reportingService,
-            EngineProperties engineProps,
-            ApplicationContext applicationContext
-    ) {
-        this.executionRepo    = executionRepo;
-        this.scenarioRegistry = scenarioRegistry;
-        this.concurrencyGuard = concurrencyGuard;
-        this.reportingService = reportingService;
-        this.engineProps      = engineProps;
-        this.applicationContext = applicationContext;
-    }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
