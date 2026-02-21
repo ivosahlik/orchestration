@@ -4,6 +4,7 @@ import cz.ivosahlik.robotization.scenarioengine.api.dto.ScheduledJobRequest;
 import cz.ivosahlik.robotization.scenarioengine.execution.ScenarioExecutionService;
 import cz.ivosahlik.robotization.scenarioengine.repository.ScheduledJobRepository;
 import cz.ivosahlik.robotization.scenarioengine.scheduling.SchedulingService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -28,6 +29,7 @@ import java.util.UUID;
  * </pre>
  */
 @Slf4j
+@RequiredArgsConstructor
 @Component
 @Profile("demo")
 public class DemoDataInitializer implements ApplicationRunner {
@@ -35,16 +37,6 @@ public class DemoDataInitializer implements ApplicationRunner {
     private final ScenarioExecutionService executionService;
     private final SchedulingService schedulingService;
     private final ScheduledJobRepository jobRepository;
-
-    public DemoDataInitializer(
-            ScenarioExecutionService executionService,
-            SchedulingService schedulingService,
-            ScheduledJobRepository jobRepository
-    ) {
-        this.executionService = executionService;
-        this.schedulingService = schedulingService;
-        this.jobRepository = jobRepository;
-    }
 
     @Override
     public void run(ApplicationArguments args) {
