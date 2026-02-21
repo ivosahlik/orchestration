@@ -1,0 +1,33 @@
+services:
+
+  mongodb:
+    image: mongo:7
+    container_name: ubot-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ubot_admin
+      MONGO_INITDB_ROOT_PASSWORD: ubot_password
+    volumes:
+      - mongodb_data:/data/db
+
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: ubot-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ubot_admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ubot_password
+      ME_CONFIG_MONGODB_AUTH_DATABASE: admin
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin123
+      ME_CONFIG_BASICAUTH_ENABLED: "true"
+    depends_on:
+      - mongodb
+
+volumes:
+  mongodb_data:

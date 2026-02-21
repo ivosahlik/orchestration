@@ -1,0 +1,610 @@
+= UBot Scenario Engine – Architecture & Flow
+:toc: left
+:toc-title: Contents
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: ./images
+:imagesoutdir: ./images
+
+== Overview
+
+The **UBot Scenario Engine** is a Spring Boot 4 service that accepts scenario execution requests (via REST or Kafka), queues them in MongoDB, and dispatches them onto Java virtual threads.
+Cron-based batch jobs are managed through `ScheduledJob` documents and evaluated on every scheduler tick.
+
+=== Key design decisions
+
+[cols="1,2", options="header"]
+|===
+| Decision | Rationale
+| *MongoDB as source of truth* | No in-memory queue; crash-safe by default. PROCESSING scenarios are recovered to WAITING on restart.
+| *Virtual threads (Java 25)* | One thread per running scenario – cheap, non-blocking, no thread-pool sizing required.
+| *No Quartz / no JPA* | Spring `@Scheduled` tick evaluates cron expressions from MongoDB documents.
+| *Two-tier concurrency guard* | Global cap (`max-total`) + per-process cap (`per-process[code].max`) via paired semaphores.
+| *Template method pattern* | `AbstractScenario.execute()` owns lifecycle; subclasses implement only `doExecute()`.
+|===
+
+---
+
+== Process Map
+
+The diagram below shows all components and how control flows between them.
+
+[plantuml, process-map, svg]
+----
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam component {
+  BackgroundColor #D6EAF8
+  BorderColor #2980B9
+  ArrowColor #2C3E50
+}
+skinparam rectangle {
+  BackgroundColor #EBF5FB
+  BorderColor #2980B9
+}
+skinparam database {
+  BackgroundColor #D5F5E3
+  BorderColor #27AE60
+}
+skinparam actor {
+  BackgroundColor #FAD7A0
+  BorderColor #E67E22
+}
+
+title UBot Scenario Engine – Process Map
+
+actor       "Client / Kafka"          as client
+actor       "Cron Scheduler"          as scheduler
+
+rectangle "REST Layer" {
+  component [ScenarioController\n/api/scenarios]          as scenCtrl
+  component [SchedulingController\n/api/jobs]             as jobCtrl
+}
+
+rectangle "Scheduling" {
+  component [SchedulingService\ntick() every 100 ms]      as schedSvc
+  component [WorkingHoursService\nrule evaluation]        as whSvc
+  component [URL Consumer\nRestClient.get()]              as urlFetch
+}
+
+rectangle "Execution Engine" {
+  component [ScenarioExecutionService\ndispatch loop]     as execSvc
+  component [ConcurrencyGuard\n2-tier semaphore]          as guard
+  component [ScenarioRegistry\nSpring prototype beans]    as registry
+  component [AbstractScenario\ndoExecute() loop]          as scenario
+  component [StepProcessor\nPRE/POST hooks]               as steps
+}
+
+database "MongoDB" {
+  component [scenario_executions]   as execCol
+  component [scheduled_jobs]        as jobCol
+  component [scenario_runs]         as runCol
+}
+
+client    --> scenCtrl   : POST /api/scenarios\nGET  /api/scenarios/{id}\nPOST /api/scenarios/{id}/signal
+client    --> jobCtrl    : POST /api/jobs\nPUT  /api/jobs/{id}
+
+scenCtrl  --> execSvc    : submit()
+jobCtrl   --> schedSvc   : create / update / delete
+
+scheduler --> schedSvc   : tick() every 100 ms
+schedSvc  --> jobCol     : findByEnabled(true)
+schedSvc  --> whSvc      : isWithinWorkingHours()
+schedSvc  --> urlFetch   : fetch inputData (if urlConsumer set)
+schedSvc  --> execSvc    : submit()
+
+execSvc   --> execCol    : save WAITING
+execSvc   --> guard      : tryAcquire(threadCode)
+guard     --> execSvc    : Permit or empty
+execSvc   --> registry   : getScenario(scenarioCode)
+registry  --> scenario   : prototype bean
+execSvc   --> steps      : runSteps(PRE_PROCESSING / PRE_ITEM …)
+execSvc   --> scenario   : setInputData() / execute()
+scenario  --> execCol    : save PROCESSING → COMPLETED|FAILED|SUSPENDED
+execSvc   --> runCol     : save ScenarioRun (reporting)
+
+@enduml
+----
+
+---
+
+== State Machine – ScenarioExecution
+
+[plantuml, state-machine, svg]
+----
+@startuml
+skinparam state {
+  BackgroundColor #D6EAF8
+  BorderColor #2980B9
+  ArrowColor #2C3E50
+}
+
+title ScenarioExecution State Transitions
+
+[*]           --> WAITING      : submit() called
+
+WAITING       --> PROCESSING   : dispatcher acquires semaphore\n+ virtual thread starts
+PROCESSING    --> COMPLETED    : doExecute() returns false\n(no more items)
+PROCESSING    --> FAILED       : unhandled exception
+PROCESSING    --> SUSPENDED    : suspend() signal received\nafter current item
+
+SUSPENDED     --> WAITING      : unsuspend() called\n(context preserved)
+
+COMPLETED     --> [*]
+FAILED        --> [*]
+
+@enduml
+----
+
+---
+
+== Sequence Diagram – Scheduled Batch Job (urlConsumer)
+
+Full call sequence when a `ScheduledJob` with `urlConsumer` fires.
+
+[plantuml, seq-scheduled-url, svg]
+----
+@startuml
+skinparam sequence {
+  ArrowColor #2C3E50
+  ActorBorderColor #E67E22
+  LifeLineBorderColor #2980B9
+  ParticipantBackgroundColor #D6EAF8
+  ParticipantBorderColor #2980B9
+  NoteBackgroundColor #FEF9E7
+  NoteBorderColor #F39C12
+}
+
+title Scheduled Job – URL Consumer Execution Flow
+
+participant "Spring\n@Scheduled"     as sched    order 1
+participant "SchedulingService"       as schedSvc order 2
+participant "MongoDB\n(scheduled_jobs)" as jobDb  order 3
+participant "WorkingHoursService"     as wh       order 4
+participant "External URL"            as url      order 5
+participant "ScenarioExecutionService" as execSvc order 6
+participant "MongoDB\n(executions)"   as execDb   order 7
+participant "ConcurrencyGuard"        as guard    order 8
+participant "AbstractScenario"        as scenario order 9
+participant "StepProcessor"           as steps    order 10
+
+== Tick ==
+
+sched    -> schedSvc  : tick()
+schedSvc -> jobDb     : findByEnabled(true)
+jobDb   --> schedSvc  : List<ScheduledJob>
+
+loop for each enabled job
+  schedSvc -> schedSvc : CronExpression.parse()\nnextAfterLast ≤ now ?
+
+  alt cron not yet due
+    schedSvc -> schedSvc : skip
+  else cron fired
+    schedSvc -> wh        : isWithinWorkingHours(rule)
+    wh       --> schedSvc : true / false
+
+    alt outside working hours
+      schedSvc -> schedSvc : log + skip
+    else within working hours
+
+      == Fetch Input Data ==
+
+      alt urlConsumer is set
+        schedSvc -> url      : GET urlConsumer
+        url      --> schedSvc : response body (String inputData)
+      else inputDataTemplate
+        schedSvc -> schedSvc : replace {{now}} → inputData
+      end
+
+      == Submit Execution ==
+
+      schedSvc -> execSvc   : submit(correlationId, scenarioCode,\nthreadCode, inputData, steps, …)
+      execSvc  -> execDb    : save(state=WAITING)
+      execDb  --> execSvc   : saved ScenarioExecution
+      execSvc --> schedSvc  : ScenarioExecution
+
+      schedSvc -> jobDb     : save(job.lastTriggered = now)
+    end
+  end
+end
+
+== Dispatch Loop (runs every ~1 s) ==
+
+execSvc  -> execDb   : findByState(WAITING)
+execDb  --> execSvc  : List<ScenarioExecution>
+
+loop for each WAITING execution
+  execSvc -> guard   : tryAcquire(threadCode)
+
+  alt no semaphore slot
+    guard --> execSvc : empty
+  else slot acquired
+    guard --> execSvc : Permit
+
+    execSvc -> execDb  : save(state=PROCESSING, runStart=now)
+
+    == Virtual Thread: executeScenario ==
+
+    execSvc -> scenario : new (prototype bean)
+    execSvc -> steps    : runSteps(PRE_PROCESSING)
+    execSvc -> scenario : setInputData(inputData)
+
+    loop execute items
+      execSvc -> steps    : runSteps(PRE_ITEM)
+      execSvc -> scenario : execute()
+      note right : doExecute() contains\nbusiness logic
+      scenario --> execSvc : hasMore (boolean)
+      execSvc -> steps    : runSteps(POST_ITEM)
+
+      alt no more items
+        execSvc -> steps    : runSteps(POST_PROCESSING)
+        execSvc -> execDb   : save(state=COMPLETED, runEnd=now)
+        execSvc -> guard    : permit.close()
+      else suspend signal received
+        execSvc -> execDb   : save(state=SUSPENDED, context)
+        execSvc -> guard    : permit.close()
+      end
+    end
+  end
+end
+
+@enduml
+----
+
+---
+
+== Sequence Diagram – REST Scenario Submit
+
+[plantuml, seq-rest-submit, svg]
+----
+@startuml
+skinparam sequence {
+  ArrowColor #2C3E50
+  ParticipantBackgroundColor #D6EAF8
+  ParticipantBorderColor #2980B9
+  NoteBackgroundColor #FEF9E7
+  NoteBorderColor #F39C12
+}
+
+title REST Submit – from HTTP request to completion
+
+actor       "Client"                   as client
+participant "ScenarioController"       as ctrl
+participant "ScenarioExecutionService" as execSvc
+participant "MongoDB\n(executions)"    as db
+participant "ConcurrencyGuard"         as guard
+participant "AbstractScenario"         as scenario
+
+== Submit ==
+
+client  -> ctrl    : POST /api/scenarios\n{ scenarioCode, inputData, … }
+ctrl    -> execSvc : submit(correlationId, …)
+execSvc -> db      : save(state=WAITING)
+db     --> execSvc : ScenarioExecution
+execSvc --> ctrl   : ScenarioExecution
+ctrl   --> client  : 202 Accepted\n{ correlationId }
+
+== Poll status (optional) ==
+
+client  -> ctrl    : GET /api/scenarios/{correlationId}
+ctrl    -> execSvc : getStatus(correlationId)
+execSvc -> db      : findById
+db     --> execSvc : ScenarioExecution
+execSvc --> ctrl   : ScenarioExecution
+ctrl   --> client  : 200 OK { state, statistics }
+
+== Dispatcher picks it up ==
+
+execSvc -> db      : findByState(WAITING)
+db     --> execSvc : [execution]
+execSvc -> guard   : tryAcquire(threadCode)
+guard  --> execSvc : Permit
+execSvc -> db      : save(state=PROCESSING)
+execSvc -> scenario : setInputData() + execute()
+scenario --> execSvc : done (false)
+execSvc -> db      : save(state=COMPLETED)
+execSvc -> guard   : permit.close()
+
+== Final poll ==
+
+client  -> ctrl    : GET /api/scenarios/{correlationId}
+ctrl   --> client  : 200 OK { state=COMPLETED, result=OK, statistics }
+
+== Optional: Send signal ==
+
+client  -> ctrl    : POST /api/scenarios/{correlationId}/signal\n{ signal: "TERMINATE" }
+ctrl    -> execSvc : signal(correlationId, "TERMINATE")
+note right of execSvc : Routes to running\nScenario.processSignal()
+execSvc --> ctrl   : true
+ctrl   --> client  : 200 OK
+
+@enduml
+----
+
+---
+
+== Sequence Diagram – Suspend & Resume
+
+[plantuml, seq-suspend-resume, svg]
+----
+@startuml
+skinparam sequence {
+  ArrowColor #2C3E50
+  ParticipantBackgroundColor #D6EAF8
+  ParticipantBorderColor #2980B9
+}
+
+title Suspend / Resume Flow
+
+actor       "Client"                   as client
+participant "ScenarioController"       as ctrl
+participant "ScenarioExecutionService" as execSvc
+participant "MongoDB"                  as db
+participant "AbstractScenario"         as scenario
+
+== Running ==
+
+execSvc -> scenario : execute() [item N]
+scenario --> execSvc : hasMore = true
+
+== Suspend request ==
+
+client  -> ctrl    : POST /api/scenarios/{id}/suspend
+ctrl    -> execSvc : suspend(correlationId)
+execSvc -> execSvc : shouldSuspend.set(true)
+execSvc --> ctrl   : true
+ctrl   --> client  : 200 OK
+
+note over execSvc,scenario : Current item finishes normally;\nsuspend check fires after POST_ITEM
+
+execSvc -> scenario : execute() [item N+1]
+scenario --> execSvc : hasMore = true
+execSvc -> execSvc  : shouldSuspend == true → break loop
+
+execSvc -> db : save(state=SUSPENDED,\ncontext=scenario.getContext())
+execSvc -> execSvc : permit.close()
+
+== Resume ==
+
+client  -> ctrl    : POST /api/scenarios/{id}/unsuspend
+ctrl    -> execSvc : unsuspend(correlationId)
+execSvc -> db      : save(state=WAITING)
+execSvc --> ctrl   : 200 OK
+ctrl   --> client  : 200 OK
+
+note over execSvc : Dispatcher picks up\nWAITING execution again
+
+execSvc -> scenario : setContext(saved context)
+execSvc -> scenario : execute() [item N+2]
+
+@enduml
+----
+
+---
+
+== Sequence Diagram – Offertool Kafka Scenario
+
+Full call sequence when the Offertool system publishes an offer event to Kafka and the engine processes it.
+
+[plantuml, seq-offertool, svg]
+----
+@startuml
+skinparam sequence {
+  ArrowColor #2C3E50
+  ActorBorderColor #E67E22
+  LifeLineBorderColor #2980B9
+  ParticipantBackgroundColor #D6EAF8
+  ParticipantBorderColor #2980B9
+  NoteBackgroundColor #FEF9E7
+  NoteBorderColor #F39C12
+}
+
+title Offertool Kafka Scenario – End-to-End Flow
+
+actor       "Offertool System"             as offertool
+participant "Kafka\n(offertool.kafka.topic)" as kafka    order 2
+participant "OffertoolKafkaConsumer"        as consumer  order 3
+participant "ScenarioExecutionService"      as execSvc   order 4
+participant "MongoDB\n(executions)"         as db        order 5
+participant "ConcurrencyGuard"              as guard     order 6
+participant "ScenarioRegistry"              as registry  order 7
+participant "OffertoolScenario\n(prototype)" as scenario order 8
+participant "StepProcessor"                 as steps     order 9
+
+== Kafka Ingest ==
+
+offertool -> kafka   : publish OfferEvent JSON\n{ offerId, variantId, variantState,\n  testAppLogin, ca, contractId, … }
+kafka     -> consumer : @KafkaListener\nConsumerRecord<String,String>
+
+consumer -> consumer  : objectMapper.readValue(payload,\nOffertoolOfferEvent.class)
+note right of consumer
+  Parses: offerId, variantId,
+  variantState, testAppLogin,
+  platform, type, contractDuration,
+  clientCommitment …
+end note
+
+consumer -> consumer  : correlationId = UUID.randomUUID()
+
+consumer -> execSvc   : submit(correlationId,\n"offertool", "DEFAULT",\npayload, null, Instant.now(),\n"kafka-offertool", null,\nevent.testAppLogin())
+
+== Persist & Acknowledge ==
+
+execSvc -> db         : save(state=WAITING,\nscenarioCode="OFFERTOOL_BATCH_PROCESS")
+db      --> execSvc   : ScenarioExecution
+execSvc --> consumer  : ScenarioExecution
+note right of kafka   : Kafka offset committed —\nno message loss
+
+== Dispatch Loop (≈every 1 s) ==
+
+execSvc  -> db        : findByState(WAITING)
+db      --> execSvc   : [ScenarioExecution]
+
+execSvc  -> guard     : tryAcquire("DEFAULT")
+
+alt no semaphore slot available
+  guard --> execSvc   : empty — will retry next tick
+else slot acquired
+  guard --> execSvc   : Permit
+
+  execSvc -> db       : save(state=PROCESSING, runStart=now)
+
+  == Virtual Thread: executeScenario ==
+
+  execSvc -> registry  : getScenario("OFFERTOOL_BATCH_PROCESS")
+  registry --> execSvc : OffertoolScenario (new prototype)
+
+  execSvc -> steps     : runSteps(PRE_PROCESSING)
+
+  execSvc -> scenario  : setInputData(payload)
+  note right of scenario
+    Parses JSON → OffertoolOfferEvent;
+    logs offerId, variantId, ca,
+    contractId, variantState
+  end note
+
+  == Single-shot Execution ==
+
+  execSvc -> steps     : runSteps(PRE_ITEM)
+  execSvc -> scenario  : execute()
+
+  scenario -> scenario : setScenarioStep("processing-offer")
+  scenario -> scenario : log platform, type, contractDuration
+  note right of scenario : TODO: business logic\n(CRM call, bot action, …)
+  scenario -> scenario : setResultOK(\n  "Offer processed: offerId=X variantId=Y")
+  scenario -> scenario : increaseSuccess()
+  scenario --> execSvc : hasMore = false\n(single-shot returns false)
+
+  execSvc -> steps     : runSteps(POST_ITEM)
+  execSvc -> steps     : runSteps(POST_PROCESSING)
+
+  execSvc -> db        : save(state=COMPLETED,\nrunEnd=now, statistics)
+  execSvc -> guard     : permit.close()
+end
+
+== Statistics ==
+
+note over db
+  ScenarioExecution.statistics includes:
+  offerId, variantId, platform,
+  type, variantState  (extendStatistics)
+end note
+
+@enduml
+----
+
+---
+
+== Concurrency Model
+
+[plantuml, concurrency, svg]
+----
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam rectangle {
+  BackgroundColor #EBF5FB
+  BorderColor #2980B9
+}
+
+title Two-tier Concurrency Guard
+
+rectangle "ConcurrencyGuard" {
+
+  rectangle "Global Semaphore\n(max-total = 50)" as global {
+  }
+
+  rectangle "Per-process Semaphores" as perProc {
+    rectangle "DEFAULT\nmax=10, min=2"  as d
+    rectangle "REPORT\nmax=5,  min=1"  as r
+    rectangle "OFFERTOOL\nmax=? (default)" as o
+  }
+}
+
+note bottom of global
+  A scenario must acquire
+  ONE slot from its process
+  semaphore AND ONE slot
+  from the global semaphore.
+  Both released on finish.
+end note
+
+@enduml
+----
+
+---
+
+== Component Summary
+
+[cols="1,2,2", options="header"]
+|===
+| Component | Responsibility | Key methods
+
+| `ScenarioController`
+| REST entry point for scenario lifecycle
+| `submit()`, `status()`, `signal()`, `suspend()`, `unsuspend()`
+
+| `SchedulingController`
+| CRUD for `ScheduledJob` documents
+| `create()`, `update()`, `delete()`, `listAll()`
+
+| `SchedulingService`
+| Evaluates cron jobs every 100 ms; fetches URL or resolves template; calls `submit()`
+| `tick()`, `evaluate()`, `fetchFromUrl()`, `resolveInputData()`
+
+| `WorkingHoursService`
+| Parses `MON-FRI(08:00-17:00)\|SAT(09:00-12:00)` rules; OR semantics
+| `isWithinWorkingHours(rule, now)`
+
+| `ScenarioExecutionService`
+| Dispatch loop; virtual-thread lifecycle; suspend/resume
+| `submit()`, `signal()`, `suspend()`, `unsuspend()`, `dispatchLoop()`
+
+| `ConcurrencyGuard`
+| Two-tier semaphore (global + per-process)
+| `tryAcquire(threadCode)` → `Permit`
+
+| `AbstractScenario`
+| Template-method base for all scenarios; counters; signal handling
+| `execute()`, `doExecute()`, `increaseSuccess()`, `isTerminateSignal()`
+
+| `StepProcessor`
+| PRE/POST hook extension point
+| `execute(type, execution, scenario, code, params)`
+|===
+
+---
+
+== Configuration Reference
+
+[source,yaml]
+----
+engine:
+  concurrency:
+    max-total: 50           # Global ceiling for all concurrent scenarios
+    per-process:
+      DEFAULT:
+        max: 10             # Max concurrent DEFAULT-bucket scenarios
+        min: 2              # Min guaranteed slots
+      REPORT:
+        max: 5
+        min: 1
+  executor:
+    check-interval-ms: 1000 # Dispatcher poll interval
+    recover-on-start: true  # Move PROCESSING → WAITING on startup
+
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: ubot-scenario-engine
+  data:
+    mongodb:
+      auto-index-creation: true
+  mongodb:
+    uri: mongodb://ubot_admin:ubot_password@localhost:27017/ubot-scenario-engine?authSource=admin
+  threads:
+    virtual:
+      enabled: true         # Virtual threads for Tomcat + @Async + @Scheduled
+----

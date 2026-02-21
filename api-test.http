@@ -1,0 +1,301 @@
+### UBot Scenario Engine – REST API Test Suite
+### IntelliJ HTTP Client / VS Code REST Client format
+### Base URL: http://localhost:8080
+### Start app with demo profile first:
+###   docker compose up mongodb mongo-express   (MongoDB only)
+###   java -jar target/ubot-scenario-engine-*-exec.jar --spring.profiles.active=demo
+
+@baseUrl = http://localhost:8080
+@baseUrlMock = http://localhost:8082
+@scenarioId = {{submit_hello.response.body.correlationId}}
+
+# ── Health check ──────────────────────────────────────────────────────────────
+
+### Actuator health
+GET {{baseUrl}}/actuator/health
+
+### Engine stats
+GET {{baseUrl}}/api/scenarios/stats
+
+
+# ── HELLO_WORLD scenario ──────────────────────────────────────────────────────
+
+### Submit HELLO_WORLD (single-shot, always OK)
+# @name submit_hello
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{
+  "scenarioCode": "HELLO_WORLD",
+  "inputData": "ivosahlik",
+  "username": "test-user",
+  "submitHostname": "dev-machine"
+}
+
+###
+
+### Get status of last submitted HELLO_WORLD
+GET {{baseUrl}}/api/scenarios/{{scenarioId}}
+
+
+# ── BATCH_PROCESS scenario ────────────────────────────────────────────────────
+
+### Submit BATCH_PROCESS with 6 items
+# @name submit_batch
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{
+  "scenarioCode": "BATCH_PROCESS",
+  "inputData": "6",
+  "username": "test-user"
+}
+
+###
+
+### Get BATCH_PROCESS status
+GET {{baseUrl}}/api/scenarios/{{submit_batch.response.body.correlationId}}
+
+
+# ── LONG_RUNNING scenario (for signal / suspend testing) ──────────────────────
+
+### Submit LONG_RUNNING (20 iterations, ~10s total)
+# @name submit_long
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{
+  "scenarioCode": "LONG_RUNNING",
+  "inputData": "20",
+  "username": "test-user"
+}
+
+###
+
+### Get LONG_RUNNING status (should be PROCESSING if called quickly)
+GET {{baseUrl}}/api/scenarios/{{submit_long.response.body.correlationId}}
+
+###
+
+### Send TERMINATE signal to LONG_RUNNING
+POST {{baseUrl}}/api/scenarios/39cd2ce2-3fe5-4d24-b227-2a803d990a96/signal
+Content-Type: application/json
+
+{
+  "signal": "TERMINATE"
+}
+
+
+### ── REPORT_GENERATOR scenario ─────────────────────────────────────────────────
+
+### Submit REPORT_GENERATOR (uses REPORT concurrency bucket)
+# @name submit_report
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{
+  "scenarioCode": "REPORT_GENERATOR",
+  "threadCode": "REPORT",
+  "inputData": "quarterly-financials",
+  "username": "test-user"
+}
+
+###
+
+### Get REPORT_GENERATOR status
+GET {{baseUrl}}/api/scenarios/{{submit_report.response.body.correlationId}}
+
+
+# ── SUSPENDABLE scenario (suspend / resume flow) ──────────────────────────────
+
+### Submit SUSPENDABLE (5 pages)
+# @name submit_suspendable
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{
+  "scenarioCode": "SUSPENDABLE",
+  "inputData": "5",
+  "username": "test-user"
+}
+
+###
+
+### Suspend SUSPENDABLE (send while PROCESSING)
+POST {{baseUrl}}/api/scenarios/{{submit_suspendable.response.body.correlationId}}/suspend
+
+###
+
+### Get status (should be SUSPENDED)
+GET {{baseUrl}}/api/scenarios/{{submit_suspendable.response.body.correlationId}}
+
+###
+
+### Resume SUSPENDABLE
+POST {{baseUrl}}/api/scenarios/{{submit_suspendable.response.body.correlationId}}/unsuspend
+
+###
+
+### Get final status (should be COMPLETED)
+GET {{baseUrl}}/api/scenarios/{{submit_suspendable.response.body.correlationId}}
+
+
+# ── List scenarios by state ────────────────────────────────────────────────────
+
+### List all WAITING scenarios
+GET {{baseUrl}}/api/scenarios?state=WAITING
+
+### List all PROCESSING scenarios
+GET {{baseUrl}}/api/scenarios?state=PROCESSING
+
+### List all COMPLETED scenarios
+GET {{baseUrl}}/api/scenarios?state=COMPLETED
+
+### List all FAILED scenarios
+GET {{baseUrl}}/api/scenarios?state=FAILED
+
+### List all SUSPENDED scenarios
+GET {{baseUrl}}/api/scenarios?state=SUSPENDED
+
+
+# ── Scheduled Jobs ─────────────────────────────────────────────────────────────
+
+### List all scheduled jobs
+GET {{baseUrl}}/api/jobs
+
+###
+
+### Create a new scheduled job (fires every 2 minutes)
+# @name create_job
+POST {{baseUrl}}/api/jobs
+Content-Type: application/json
+
+{
+  "name": "demo-batch-job",
+  "scenarioCode": "BATCH_PROCESS",
+  "threadCode": "BATCH_PROCESS",
+  "cronExpression": "0 */2 * * * *",
+  "enabled": true,
+  "inputDataTemplate": "3"
+}
+
+###
+
+### Disable the job (update)
+PUT {{baseUrl}}/api/jobs/{{create_job.response.body.id}}
+Content-Type: application/json
+
+{
+  "name": "demo-batch-job",
+  "scenarioCode": "BATCH_PROCESS",
+  "threadCode": "BATCH_PROCESS",
+  "cronExpression": "0 */2 * * * *",
+  "enabled": false,
+  "inputDataTemplate": "3"
+}
+
+###
+
+### Delete the job
+DELETE {{baseUrl}}/api/jobs/{{create_job.response.body.id}}
+
+
+# ── offertool scenario (Kafka offer payload submitted via REST) ───────────────
+
+### Submit offertool – full offer payload (mirrors Kafka consumer input)
+# @name submit_offertool
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{
+  "scenarioCode": "offertool",
+  "username": "admintest",
+  "inputData": "{\"apiVersion\":1,\"offerId\":7699,\"variantId\":9111,\"testAppLogin\":\"admintest\",\"email\":\"pavel.vanek-ext@ivosahlik.com\",\"ca\":\"1040093072\",\"ico\":\"56150563\",\"bmslVersion\":\"2.0\",\"note\":null,\"internalNote\":null,\"contractId\":\"1-1617870225_0\",\"contractAddenum\":{},\"platform\":\"V4\",\"type\":\"Akvizice\",\"contractDuration\":24,\"realContractDuration\":24,\"previousContractEndDate\":null,\"contractStartDate\":\"2024-01-18T00:00:00.000+00:00\",\"contractEndDate\":\"2026-01-17T00:00:00.000+00:00\",\"payTerm\":18,\"exclusiveDiscount\":0.0,\"postponedSubsidy\":0.0,\"manualSubsidy\":0.0,\"transferredSubsidy\":0.0,\"fines\":0.0,\"clientCommitment\":{\"priceWithVat\":121.0,\"priceWithoutVat\":100.0},\"principalAmount\":0.0,\"newBmsl\":{\"priceWithVat\":121.0,\"priceWithoutVat\":100.0},\"realBmsl\":{\"priceWithVat\":121.0,\"priceWithoutVat\":100.0},\"systemBmsl\":{\"priceWithVat\":121.0,\"priceWithoutVat\":100.0},\"subsidyTotal\":0.0,\"subsidyHw\":200.0,\"billingGroups\":[{\"id\":\"97fbc71d-add7-45c6-8f3d-028329f7d213\",\"billingAccountId\":0,\"recipient\":\"Výchozí\",\"address\":{\"city\":\"Olomouc 1\",\"street\":\"Dr. Milady Horákové\",\"streetNumber\":\"1079/21\",\"postalCode\":\"77900\"},\"volumeDiscounts\":[],\"invoiceDiscounts\":[]}],\"installationPlaces\":[{\"id\":\"305da18a-25f9-4032-bcbb-6140b4e6a0ed\",\"name\":\"BMSL Test\",\"contactPerson\":\"X\",\"contactPhone\":\"420735425136\",\"address\":{\"city\":\"Olomouc 1\",\"street\":\"Dr. Milady Horákové\",\"streetNumber\":\"/1079/21\",\"postalCode\":\"77900\"}}],\"mobileFallback\":{\"priceFixed\":0.0,\"priceMobile\":0.0,\"priceSms\":0.0},\"fixFallback\":{\"priceFixed\":0.0,\"priceMobile\":0.0},\"mobileSubscribers\":[],\"fixSubscribers\":[],\"connectivity\":[],\"others\":[],\"vfWelcome\":null,\"hardware\":[],\"vtv\":[{\"partNo\":\"TVTARIFF001\",\"name\":\"ivosahlik TV - Klasik\",\"itemType\":\"Tarif\",\"serviceId\":null,\"serviceType\":\"New\",\"discount\":0.0,\"billingGroupId\":\"97fbc71d-add7-45c6-8f3d-028329f7d213\",\"installationPlaceId\":\"\",\"addons\":[],\"orderId\":null,\"otherServices\":[]}],\"hardwareRental\":[],\"diffPackages\":[],\"subsidyBudgetUsed\":0.0,\"subsidyBudgetUsedWithVat\":0.0,\"hwBudgetUsed\":0.0,\"hwBudgetUsedWithVat\":0.0,\"variantState\":\"KeZpracovaniRoBotem\",\"invoiceDiscount\":null,\"invoiceDiscountPromo\":null,\"invoiceDiscountPromoMonths\":null,\"inflationaryClause\":true,\"inflationaryClauseStartDate\":null,\"TS\":{\"products\":[]},\"sharedTariffs\":[],\"hasFrozenHwSubsidy\":false,\"frozenHwSubsidyAmount\":0.0,\"frozenHwSubsidyMonths\":0}"
+}
+
+###
+
+### Get offertool scenario status (WAITING → PROCESSING → COMPLETED)
+GET {{baseUrl}}/api/scenarios/{{submit_offertool.response.body.correlationId}}
+
+###
+
+### Send TERMINATE signal to offertool scenario (if still PROCESSING)
+POST {{baseUrl}}/api/scenarios/{{submit_offertool.response.body.correlationId}}/signal
+Content-Type: application/json
+
+{
+  "signal": "terminate"
+}
+
+
+### Offertool mock data - consumer
+GET {{baseUrlMock}}/api/offers/variants
+
+
+### Create a new scheduled job (fires every 10 sec)
+# @name create_job
+POST {{baseUrl}}/api/jobs
+Content-Type: application/json
+
+{
+  "name": "offertool-batch-job",
+  "scenarioCode": "OFFERTOOL_BATCH_PROCESS",
+  "threadCode": "OFFERTOOL_BATCH_PROCESS",
+  "cronExpression": "*/10 * * * * *",
+  "urlConsumer": "{{baseUrlMock}}/api/offers/variants",
+  "enabled": true,
+  "inputDataTemplate": "3"
+}
+
+###
+
+### Disable the job (update)
+PUT {{baseUrl}}/api/jobs/{{create_job.response.body.id}}
+Content-Type: application/json
+
+{
+  "name": "offertool-batch-job",
+  "scenarioCode": "OFFERTOOL_BATCH_PROCESS",
+  "threadCode": "OFFERTOOL_BATCH_PROCESS",
+  "cronExpression": "*/10 * * * * *",
+  "enabled": false,
+  "inputDataTemplate": "3"
+}
+
+###
+
+### Delete the job
+DELETE {{baseUrl}}/api/jobs/{{create_job.response.body.id}}
+
+
+
+
+
+
+
+
+
+
+
+# ── Concurrent load test (submit multiple scenarios at once) ──────────────────
+
+### Submit 3 concurrent HELLO_WORLD scenarios
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{"scenarioCode": "HELLO_WORLD", "inputData": "Concurrent-1", "username": "load-test"}
+
+###
+
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{"scenarioCode": "HELLO_WORLD", "inputData": "Concurrent-2", "username": "load-test"}
+
+###
+
+POST {{baseUrl}}/api/scenarios
+Content-Type: application/json
+
+{"scenarioCode": "HELLO_WORLD", "inputData": "Concurrent-3", "username": "load-test"}

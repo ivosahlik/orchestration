@@ -1,0 +1,69 @@
+spring:
+  application:
+    name: ubot-scenario-engine
+
+  # allow EngineAutoConfiguration to be loaded once (auto-config path)
+  # even if component scan accidentally picks it up too (Spring Boot 4 snapshot behaviour)
+  main:
+    allow-bean-definition-overriding: true
+
+  # ── Virtual Threads (Spring Boot 3.2+ / 4) ──────────────────────────────────
+  # Enables virtual threads for Tomcat, @Async, @Scheduled and TaskExecutor globally
+  threads:
+    virtual:
+      enabled: true
+
+  # ── Kafka ─────────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: ubot-scenario-engine
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  data:
+    mongodb:
+      auto-index-creation: true
+  mongodb:
+    uri: mongodb://ubot_admin:ubot_password@localhost:27017/ubot-scenario-engine?authSource=admin
+
+# ── Offertool Kafka ───────────────────────────────────────────────────────────
+offertool:
+  kafka:
+    topic: offertool.offers
+
+# ── Engine configuration ─────────────────────────────────────────────────────
+engine:
+  concurrency:
+    # Global ceiling – how many scenarios can run simultaneously across all processes
+    max-total: 50
+    # Per-process limits; if a code is not listed it shares the global pool freely
+    per-process:
+      DEFAULT:
+        max: 10
+        min: 2
+      REPORT:
+        max: 5
+        min: 1
+  executor:
+    # How often the background dispatcher polls for WAITING scenarios
+    check-interval-ms: 1000
+    # On startup, PROCESSING scenarios are recovered (moved back to WAITING)
+    recover-on-start: true
+
+# ── Actuator ─────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,loggers
+  endpoint:
+    health:
+      show-details: always
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:
+    cz.ivosahlik.robotization: INFO

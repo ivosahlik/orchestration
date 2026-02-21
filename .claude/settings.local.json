@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn -pl scenario-engine compile:*)",
+      "Bash(java:*)",
+      "Bash(JAVA_HOME=/Users/ivovosahlik/Library/Java/JavaVirtualMachines/temurin-25/Contents/Home mvn:*)"
+    ]
+  }
+}

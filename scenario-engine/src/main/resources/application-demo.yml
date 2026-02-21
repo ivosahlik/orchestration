@@ -1,0 +1,28 @@
+## ─────────────────────────────────────────────────────────────────────────────
+##  Demo profile – activate with: --spring.profiles.active=demo
+## ─────────────────────────────────────────────────────────────────────────────
+
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/ubot-scenario-engine-demo
+
+engine:
+  executor:
+    # Faster dispatcher for demo/testing (vs 1000ms default)
+    check-interval-ms: 200
+    recover-on-start: true
+  concurrency:
+    max-total: 20
+    per-process:
+      DEFAULT:
+        max: 5
+        min: 1
+      REPORT:
+        max: 2
+        min: 1
+
+logging:
+  level:
+    cz.ivosahlik.robotization: DEBUG
+    org.springframework.data.mongodb: INFO

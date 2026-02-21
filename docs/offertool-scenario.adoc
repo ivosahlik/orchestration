@@ -1,0 +1,466 @@
+= OffertoolScenario – Developer Guide
+:toc: left
+:toc-title: Contents
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: ./images
+:imagesoutdir: ./images
+
+== Overview
+
+The **Offertool scenario** processes business offer events produced by the Offertool system and delivered via Apache Kafka.
+Each Kafka message represents one offer variant; the engine creates an independent, single-shot scenario execution for it.
+
+[cols="1,2", options="header"]
+|===
+| Property | Value
+| Scenario code (bean name) | `OFFERTOOL_BATCH_PROCESS`
+| Thread code (concurrency bucket) | `DEFAULT`
+| Trigger | Kafka topic `offertool.offers`
+| Execution model | Single-shot (`doExecute()` returns `false`)
+| Source class | `cz.ivosahlik.robotization.scenarioengine.demo.OffertoolScenario`
+| Consumer class | `cz.ivosahlik.robotization.scenarioengine.demo.OffertoolKafkaConsumer`
+| Payload type | `cz.ivosahlik.robotization.scenarioengine.demo.OffertoolOfferEvent`
+|===
+
+---
+
+== Kafka Message – OffertoolOfferEvent
+
+The JSON payload delivered on the Kafka topic is deserialized into `OffertoolOfferEvent` (a Java record).
+Unknown fields are silently ignored (`@JsonIgnoreProperties(ignoreUnknown = true)`).
+
+=== Top-level fields
+
+[cols="1,1,3", options="header"]
+|===
+| Field | Type | Description
+| `offerId` | `long` | Unique identifier of the offer
+| `variantId` | `long` | Identifier of the specific offer variant
+| `testAppLogin` | `String` | Login of the test/agent user triggering the offer; used as the scenario's `login` attribute
+| `email` | `String` | Contact e-mail address
+| `ca` | `String` | Customer account number
+| `ico` | `String` | Company registration number (IČO)
+| `contractId` | `String` | Contract identifier
+| `platform` | `String` | Platform code, e.g. `V4`
+| `type` | `String` | Offer type, e.g. `Akvizice`
+| `contractDuration` | `int` | Contract length in months
+| `contractStartDate` | `String` | ISO-8601 date-time of contract start
+| `contractEndDate` | `String` | ISO-8601 date-time of contract end
+| `variantState` | `String` | Current state of the variant in Offertool, e.g. `KeZpracovaniRoBotem`
+| `clientCommitment` | `PriceAmount` | Monthly commitment amount (with/without VAT)
+|===
+
+=== PriceAmount (nested record)
+
+[cols="1,1,3", options="header"]
+|===
+| Field | Type | Description
+| `priceWithVat` | `BigDecimal` | Amount including VAT
+| `priceWithoutVat` | `BigDecimal` | Amount excluding VAT
+|===
+
+=== Example Kafka payload
+
+[source,json]
+----
+{
+  "offerId": 4200001,
+  "variantId": 7300042,
+  "testAppLogin": "admintest",
+  "email": "test@test.com",
+  "ca": "1040093072",
+  "ico": "56150563",
+  "contractId": "1-1617870225_0",
+  "platform": "V4",
+  "type": "Akvizice",
+  "contractDuration": 24,
+  "contractStartDate": "2024-01-18T00:00:00.000+00:00",
+  "contractEndDate": "2026-01-17T00:00:00.000+00:00",
+  "variantState": "KeZpracovaniRoBotem",
+  "clientCommitment": {
+    "priceWithVat": 121.00,
+    "priceWithoutVat": 100.00
+  }
+}
+----
+
+---
+
+== Component Descriptions
+
+=== OffertoolKafkaConsumer
+
+Listens on the configured Kafka topic and bridges each message into the scenario engine.
+
+[source,java]
+----
+@KafkaListener(
+    topics  = "${offertool.kafka.topic}",
+    groupId = "${spring.kafka.consumer.group-id}"
+)
+public void consume(ConsumerRecord<String, String> record)
+----
+
+Processing steps:
+
+. Receive raw `ConsumerRecord<String, String>` from Kafka.
+. Parse the JSON value into `OffertoolOfferEvent`.
+. Generate a random `correlationId` (UUID).
+. Call `ScenarioExecutionService.submit()` with:
++
+[cols="1,2", options="header"]
+|===
+| Parameter | Value
+| `correlationId` | `UUID.randomUUID().toString()`
+| `scenarioCode` | `"offertool"` (resolves to bean `OFFERTOOL_BATCH_PROCESS`)
+| `threadCode` | `"DEFAULT"`
+| `inputData` | Raw JSON string (original Kafka payload)
+| `scheduledSteps` | `null`
+| `scheduledAt` | `Instant.now()`
+| `source` | `"kafka-offertool"`
+| `correlatedId` | `null`
+| `login` | `event.testAppLogin()`
+|===
+. Kafka offset is committed automatically after `submit()` returns – no message loss even if execution is still `WAITING`.
+
+If JSON parsing fails, the error is logged and the Kafka message is **skipped** (no retry).
+
+---
+
+=== OffertoolScenario
+
+Single-shot scenario that processes one offer variant.
+
+[cols="1,3", options="header"]
+|===
+| Aspect | Detail
+| Spring scope | `prototype` – a new instance is created per execution
+| Bean name | `OFFERTOOL_BATCH_PROCESS`
+| Base class | `AbstractScenario`
+| Thread safety | `ObjectMapper` is a `static final` field (Jackson is thread-safe for reads)
+|===
+
+==== setInputData(String inputData)
+
+Called by the engine before `execute()`.
+Deserializes the raw JSON into `OffertoolOfferEvent` and logs key identifiers:
+
+[source]
+----
+offerId, variantId, ca, contractId, variantState
+----
+
+If deserialization fails, `offer` is set to `null` and the failure is logged.
+`doExecute()` will then call `setResultFailedInit()` and return `false`.
+
+==== doExecute() – current implementation
+
+[source,java]
+----
+protected boolean doExecute() {
+    if (offer == null) {
+        setResultFailedInit("Failed to parse offer data", "Invalid JSON input");
+        return false;
+    }
+
+    setScenarioStep("processing-offer");
+    // logs: offerId, variantId, platform, type, contractDuration
+
+    // TODO: implement business processing logic for the offer
+
+    setResultOK("Offer processed: offerId=%d variantId=%d".formatted(...));
+    increaseSuccess();
+    return false; // single-shot
+}
+----
+
+[NOTE]
+====
+The `// TODO` block is the integration point for real business logic – CRM calls, bot actions, downstream API calls, etc.
+The scenario always terminates after a single invocation (`return false`).
+====
+
+==== extendStatistics(Map<String, Object> statistics)
+
+Adds offer-specific fields to the statistics map that is persisted in MongoDB on completion:
+
+[cols="1,1", options="header"]
+|===
+| Key | Value
+| `offerId` | `offer.offerId()`
+| `variantId` | `offer.variantId()`
+| `platform` | `offer.platform()`
+| `type` | `offer.type()`
+| `variantState` | `offer.variantState()`
+|===
+
+==== Result codes
+
+[cols="1,1,3", options="header"]
+|===
+| Result | Condition | Message
+| `FAILED_INIT` | JSON parsing failed in `setInputData()` | "Failed to parse offer data"
+| `OK` | Successful processing | "Offer processed: offerId=X variantId=Y"
+| `NOT_OK` | Unhandled exception in `doExecute()` | Exception message (set by `AbstractScenario`)
+|===
+
+---
+
+== Sequence Diagram
+
+See xref:scenario-engine.adoc#_sequence_diagram_offertool_kafka_scenario[Sequence Diagram – Offertool Kafka Scenario] in the main architecture document for the full end-to-end flow.
+
+[plantuml, seq-offertool-scenario, svg]
+----
+@startuml
+skinparam sequence {
+  ArrowColor #2C3E50
+  ActorBorderColor #E67E22
+  LifeLineBorderColor #2980B9
+  ParticipantBackgroundColor #D6EAF8
+  ParticipantBorderColor #2980B9
+  NoteBackgroundColor #FEF9E7
+  NoteBorderColor #F39C12
+}
+
+title OffertoolScenario – Focused Internal Flow
+
+participant "OffertoolKafkaConsumer" as consumer
+participant "ScenarioExecutionService" as execSvc
+participant "MongoDB"                  as db
+participant "ConcurrencyGuard"         as guard
+participant "OffertoolScenario"        as scenario
+
+consumer -> execSvc  : submit(correlationId, "offertool",\n"DEFAULT", jsonPayload,\nsource="kafka-offertool",\nlogin=testAppLogin)
+execSvc  -> db       : save(state=WAITING)
+execSvc --> consumer : ScenarioExecution
+
+note over db : Kafka offset committed;\nmessage safely persisted
+
+...dispatcher tick (~1 s later)...
+
+execSvc  -> db       : findByState(WAITING)
+execSvc  -> guard    : tryAcquire("DEFAULT")
+guard   --> execSvc  : Permit
+execSvc  -> db       : save(state=PROCESSING)
+
+execSvc  -> scenario : new OffertoolScenario()
+execSvc  -> scenario : setInputData(jsonPayload)
+note right of scenario
+  Parses JSON → OffertoolOfferEvent
+  Logs offerId, variantId, ca,
+  contractId, variantState
+end note
+
+execSvc  -> scenario : execute()
+
+scenario -> scenario : setScenarioStep("processing-offer")
+note right of scenario
+  TODO: business logic
+  (CRM, bot action, API call…)
+end note
+scenario -> scenario : setResultOK("Offer processed: …")
+scenario -> scenario : increaseSuccess()
+scenario --> execSvc : hasMore = false
+
+execSvc  -> db       : save(state=COMPLETED,\nstatistics={offerId, variantId,\nplatform, type, variantState})
+execSvc  -> guard    : permit.close()
+
+@enduml
+----
+
+---
+
+== Offertool Mock Service
+
+The `offertool_mock` module provides a local HTTP stub so the engine can be tested without a real Offertool connection.
+
+[cols="1,2", options="header"]
+|===
+| Property | Value
+| Port | `8082`
+| Endpoint | `GET /api/offers/variants`
+| Response | Hardcoded `OfferResponse` with randomized `offerId` / `variantId`
+|===
+
+=== Sample mock response fields
+
+[cols="1,2", options="header"]
+|===
+| Field | Mock value
+| `testAppLogin` | `"admintest"`
+| `ca` | `"1040093072"`
+| `ico` | `"56150563"`
+| `contractId` | `"1-1617870225_0"`
+| `platform` | `"V4"`
+| `type` | `"Akvizice"`
+| `contractDuration` | `24`
+| `variantState` | `"KeZpracovaniRoBotem"`
+| `clientCommitment` | `priceWithVat=121.00, priceWithoutVat=100.00`
+|===
+
+The mock also returns nested objects: `billingGroups`, `installationPlaces`, `mobileFallback`, `fixFallback`, and `vtv` (TV tariff items).
+
+---
+
+== Configuration Reference
+
+[source,yaml]
+----
+# Kafka topic the consumer listens on
+offertool:
+  kafka:
+    topic: offertool.offers          # default
+
+spring:
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: ubot-scenario-engine
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+# Concurrency: OFFERTOOL_BATCH_PROCESS runs in the DEFAULT bucket
+engine:
+  concurrency:
+    max-total: 50
+    per-process:
+      DEFAULT:
+        max: 10   # max concurrent Offertool (and other DEFAULT) executions
+        min: 2
+----
+
+To give the Offertool scenario its own concurrency bucket, add a dedicated entry:
+
+[source,yaml]
+----
+engine:
+  concurrency:
+    per-process:
+      OFFERTOOL:          # change threadCode in OffertoolKafkaConsumer to "OFFERTOOL"
+        max: 5
+        min: 1
+----
+
+---
+
+== Implementing Business Logic
+
+The `// TODO` block inside `OffertoolScenario.doExecute()` is where real processing goes.
+The parsed `offer` field provides all available data:
+
+[source,java]
+----
+@Override
+protected boolean doExecute() {
+    // offer is guaranteed non-null here
+    setScenarioStep("processing-offer");
+
+    // Example: call an external CRM
+    crmService.processOffer(
+        offer.ca(),
+        offer.contractId(),
+        offer.variantId()
+    );
+
+    setResultOK("Offer processed: offerId=%d variantId=%d"
+        .formatted(offer.offerId(), offer.variantId()));
+    increaseSuccess();
+    return false; // keep as single-shot
+}
+----
+
+=== Available `offer` fields inside doExecute()
+
+[cols="1,1", options="header"]
+|===
+| Accessor | Type
+| `offer.offerId()` | `long`
+| `offer.variantId()` | `long`
+| `offer.testAppLogin()` | `String`
+| `offer.email()` | `String`
+| `offer.ca()` | `String`
+| `offer.ico()` | `String`
+| `offer.contractId()` | `String`
+| `offer.platform()` | `String`
+| `offer.type()` | `String`
+| `offer.contractDuration()` | `int`
+| `offer.contractStartDate()` | `String`
+| `offer.contractEndDate()` | `String`
+| `offer.variantState()` | `String`
+| `offer.clientCommitment()` | `PriceAmount`
+| `offer.clientCommitment().priceWithVat()` | `BigDecimal`
+| `offer.clientCommitment().priceWithoutVat()` | `BigDecimal`
+|===
+
+=== Error handling patterns
+
+[source,java]
+----
+// Partial failure – continue processing other offers
+increaseFail();
+setResultPartial();
+
+// Hard failure – stop and mark as failed
+setResultNotOK("CRM call failed", ex.getMessage());
+return false;
+
+// Retry via re-queue (suspend is not applicable for single-shot)
+// → throw exception; engine marks as FAILED; re-submit externally if needed
+----
+
+---
+
+== Monitoring & Observability
+
+After each execution the following is persisted in MongoDB (`scenario_executions`):
+
+[source,json]
+----
+{
+  "correlationId": "<uuid>",
+  "scenarioCode": "OFFERTOOL_BATCH_PROCESS",
+  "state": "COMPLETED",
+  "result": "OK",
+  "source": "kafka-offertool",
+  "login": "admintest",
+  "statistics": {
+    "result": "OK",
+    "state": "COMPLETED",
+    "totalCount": 0,
+    "successCount": 1,
+    "failCount": 0,
+    "message": "Offer processed: offerId=4200001 variantId=7300042",
+    "scenarioStep": "processing-offer",
+    "offerId": 4200001,
+    "variantId": 7300042,
+    "platform": "V4",
+    "type": "Akvizice",
+    "variantState": "KeZpracovaniRoBotem"
+  }
+}
+----
+
+Query all completed Offertool executions:
+
+[source,javascript]
+----
+db.scenario_executions.find({
+  scenarioCode: "OFFERTOOL_BATCH_PROCESS",
+  state: "COMPLETED"
+}).sort({ runEnd: -1 })
+----
+
+Query failures:
+
+[source,javascript]
+----
+db.scenario_executions.find({
+  scenarioCode: "OFFERTOOL_BATCH_PROCESS",
+  state: "FAILED"
+})
+----

@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: offertool-mock
+
+server:
+  port: 8082
+
+logging:
+  level:
+    cz.ivosahlik.robotization: INFO
