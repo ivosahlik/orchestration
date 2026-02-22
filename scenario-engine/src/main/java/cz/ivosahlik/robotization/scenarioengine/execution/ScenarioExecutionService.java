@@ -68,7 +68,7 @@ public class ScenarioExecutionService {
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-    // Application Ready Event?
+    // Application Ready Event? StructuredTaskScope?
 //    @PostConstruct
     @EventListener(ApplicationReadyEvent.class)
     void start() {
