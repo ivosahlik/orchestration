@@ -67,6 +67,7 @@ public class ScenarioExecutionService {
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    // Application Ready Event?
     @PostConstruct
     void start() {
         if (engineProps.recoverOnStart()) {
@@ -183,7 +184,7 @@ public class ScenarioExecutionService {
 
     private void dispatchLoop() {
         try {
-            if (!checkNow.getAndSet(false) && running.size() == 0) {
+            if (!checkNow.getAndSet(false) && running.isEmpty()) {
                 // No external trigger and nothing running – still check occasionally
             }
             List<ScenarioExecution> waiting = executionRepo

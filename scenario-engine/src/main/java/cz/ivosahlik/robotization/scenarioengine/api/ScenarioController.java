@@ -7,6 +7,7 @@ import cz.ivosahlik.robotization.scenarioengine.domain.ScenarioExecution;
 import cz.ivosahlik.robotization.scenarioengine.domain.ScenarioState;
 import cz.ivosahlik.robotization.scenarioengine.execution.ScenarioExecutionService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,15 +29,12 @@ import java.util.Map;
  * </pre>
  */
 @Slf4j
+@RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/scenarios")
 public class ScenarioController {
 
     private final ScenarioExecutionService executionService;
-
-    public ScenarioController(ScenarioExecutionService executionService) {
-        this.executionService = executionService;
-    }
 
     // ── Submit ────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,7 @@
 package cz.ivosahlik.robotization.scenarioengine.domain;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -11,6 +13,8 @@ import java.util.List;
  * MongoDB document representing a cron-based scheduled scenario trigger.
  * Replaces the old JPA scheduling tables.
  */
+@Setter
+@Getter
 @Document(collection = "scheduled_jobs")
 public class ScheduledJob {
 
@@ -50,44 +54,4 @@ public class ScheduledJob {
     private Instant createdAt;
     private Instant updatedAt;
 
-    // ── Getters / Setters ────────────────────────────────────────────────────
-
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
-
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
-
-    public String getScenarioCode() { return scenarioCode; }
-    public void setScenarioCode(String scenarioCode) { this.scenarioCode = scenarioCode; }
-
-    public String getThreadCode() { return threadCode; }
-    public void setThreadCode(String threadCode) { this.threadCode = threadCode; }
-
-    public String getCronExpression() { return cronExpression; }
-    public void setCronExpression(String cronExpression) { this.cronExpression = cronExpression; }
-
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
-
-    public String getInputDataTemplate() { return inputDataTemplate; }
-    public void setInputDataTemplate(String inputDataTemplate) { this.inputDataTemplate = inputDataTemplate; }
-
-    public String getUrlConsumer() { return urlConsumer; }
-    public void setUrlConsumer(String urlConsumer) { this.urlConsumer = urlConsumer; }
-
-    public String getWorkingHoursRule() { return workingHoursRule; }
-    public void setWorkingHoursRule(String workingHoursRule) { this.workingHoursRule = workingHoursRule; }
-
-    public List<ProcessingStepDef> getProcessingSteps() { return processingSteps; }
-    public void setProcessingSteps(List<ProcessingStepDef> processingSteps) { this.processingSteps = processingSteps; }
-
-    public Instant getLastTriggered() { return lastTriggered; }
-    public void setLastTriggered(Instant lastTriggered) { this.lastTriggered = lastTriggered; }
-
-    public Instant getCreatedAt() { return createdAt; }
-    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
-
-    public Instant getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 }

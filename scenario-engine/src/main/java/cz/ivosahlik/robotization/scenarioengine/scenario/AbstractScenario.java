@@ -3,6 +3,7 @@ package cz.ivosahlik.robotization.scenarioengine.scenario;
 import cz.ivosahlik.robotization.scenarioengine.domain.ScenarioResult;
 import cz.ivosahlik.robotization.scenarioengine.domain.ScenarioSignal;
 import cz.ivosahlik.robotization.scenarioengine.domain.ScenarioState;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
@@ -41,15 +42,15 @@ import java.util.UUID;
 public abstract class AbstractScenario implements Scenario {
 
     // ── Static keys for statistics map ───────────────────────────────────────
-    public static final String KEY_RESULT        = "result";
-    public static final String KEY_STATE         = "state";
-    public static final String KEY_TOTAL_COUNT   = "totalCount";
+    public static final String KEY_RESULT = "result";
+    public static final String KEY_STATE = "state";
+    public static final String KEY_TOTAL_COUNT = "totalCount";
     public static final String KEY_SUCCESS_COUNT = "successCount";
-    public static final String KEY_FAIL_COUNT    = "failCount";
-    public static final String KEY_MESSAGE       = "message";
-    public static final String KEY_DETAIL        = "detail";
-    public static final String KEY_CURRENT_ITEM  = "currentItem";
-    public static final String KEY_TERMINATING   = "terminating";
+    public static final String KEY_FAIL_COUNT = "failCount";
+    public static final String KEY_MESSAGE = "message";
+    public static final String KEY_DETAIL = "detail";
+    public static final String KEY_CURRENT_ITEM = "currentItem";
+    public static final String KEY_TERMINATING = "terminating";
     public static final String KEY_SCENARIO_STEP = "scenarioStep";
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ public abstract class AbstractScenario implements Scenario {
 
     private String id;
     private String runId;
-    private ScenarioState state   = ScenarioState.WAITING;
+    private ScenarioState state = ScenarioState.WAITING;
     private ScenarioResult result = ScenarioResult.UNKNOWN;
 
     private String inputData;
@@ -69,7 +70,9 @@ public abstract class AbstractScenario implements Scenario {
     private Object currentItem;
     private String scenarioStep;
 
+    @Getter
     private volatile boolean terminateSignal;
+    @Getter
     private volatile boolean healthRegisterSignal;
 
     // ── Constructors ─────────────────────────────────────────────────────────
@@ -79,9 +82,9 @@ public abstract class AbstractScenario implements Scenario {
     }
 
     protected AbstractScenario(String code, ScenarioCounters counters) {
-        this.code     = code;
+        this.code = code;
         this.counters = counters;
-        this.id       = UUID.randomUUID().toString();
+        this.id = UUID.randomUUID().toString();
         log.info("Created scenario '{}' with id '{}'", code, id);
     }
 
@@ -118,8 +121,14 @@ public abstract class AbstractScenario implements Scenario {
         log.info("Processing signal '{}' on scenario '{}'", signal, id);
         try {
             switch (ScenarioSignal.fromCode(signal)) {
-                case TERMINATE              -> { terminateSignal = true;      log.info("Terminate signal set."); }
-                case CLEAR_HEALTH_REGISTER  -> { healthRegisterSignal = true; log.info("Clear-health-register signal set."); }
+                case TERMINATE -> {
+                    terminateSignal = true;
+                    log.info("Terminate signal set.");
+                }
+                case CLEAR_HEALTH_REGISTER -> {
+                    healthRegisterSignal = true;
+                    log.info("Clear-health-register signal set.");
+                }
             }
         } catch (IllegalArgumentException e) {
             log.warn("Signal '{}' not recognised.", signal);
@@ -129,29 +138,34 @@ public abstract class AbstractScenario implements Scenario {
     @Override
     public Map<String, Object> getStatistics() {
         var stats = new HashMap<String, Object>();
-        stats.put(KEY_RESULT,        result);
-        stats.put(KEY_STATE,         state);
-        stats.put(KEY_TOTAL_COUNT,   counters.getTotal());
+        stats.put(KEY_RESULT, result);
+        stats.put(KEY_STATE, state);
+        stats.put(KEY_TOTAL_COUNT, counters.getTotal());
         stats.put(KEY_SUCCESS_COUNT, counters.getSuccess());
-        stats.put(KEY_FAIL_COUNT,    counters.getFail());
-        stats.put(KEY_MESSAGE,       message);
-        stats.put(KEY_DETAIL,        detail);
+        stats.put(KEY_FAIL_COUNT, counters.getFail());
+        stats.put(KEY_MESSAGE, message);
+        stats.put(KEY_DETAIL, detail);
         if (state != ScenarioState.COMPLETED) {
             stats.put(KEY_CURRENT_ITEM, currentItem);
-            stats.put(KEY_TERMINATING,  terminateSignal);
+            stats.put(KEY_TERMINATING, terminateSignal);
         }
         if (scenarioStep != null) stats.put(KEY_SCENARIO_STEP, scenarioStep);
         extendStatistics(stats);
         return stats;
     }
 
-    /** Override to add scenario-specific entries to the statistics map. */
-    protected void extendStatistics(Map<String, Object> statistics) {}
+    /**
+     * Override to add scenario-specific entries to the statistics map.
+     */
+    protected void extendStatistics(Map<String, Object> statistics) {
+    }
 
     // ── Context (suspend / resume) ────────────────────────────────────────────
 
     @Override
-    public Object getContext() { return context; }
+    public Object getContext() {
+        return context;
+    }
 
     @Override
     public void setContext(Object context) {
@@ -161,9 +175,20 @@ public abstract class AbstractScenario implements Scenario {
 
     // ── Getters ───────────────────────────────────────────────────────────────
 
-    @Override public String getCode()   { return code; }
-    @Override public String getId()     { return id; }
-    @Override public String getRunId()  { return runId; }
+    @Override
+    public String getCode() {
+        return code;
+    }
+
+    @Override
+    public String getId() {
+        return id;
+    }
+
+    @Override
+    public String getRunId() {
+        return runId;
+    }
 
     @Override
     public void setRunId(String runId) {
@@ -178,24 +203,38 @@ public abstract class AbstractScenario implements Scenario {
         state = ScenarioState.WAITING;
     }
 
-    @Override public ScenarioState  getState()  { return state; }
-    @Override public ScenarioResult getResult() { return result; }
+    @Override
+    public ScenarioState getState() {
+        return state;
+    }
 
-    public boolean isTerminateSignal()        { return terminateSignal; }
-    public boolean isHealthRegisterSignal()   { return healthRegisterSignal; }
-    public void clearHealthRegisterSignal()   { healthRegisterSignal = false; }
+    @Override
+    public ScenarioResult getResult() {
+        return result;
+    }
+
+    public void clearHealthRegisterSignal() {
+        healthRegisterSignal = false;
+    }
 
     // ── Protected helpers for subclasses ─────────────────────────────────────
 
-    protected String getInputData()  { return inputData; }
-    protected Object getCurrentItem() { return currentItem; }
+    protected String getInputData() {
+        return inputData;
+    }
+
+    protected Object getCurrentItem() {
+        return currentItem;
+    }
 
     protected void setCurrentItem(Object item) {
         this.currentItem = item;
         log.debug("Current item: '{}'", item);
     }
 
-    protected void resetCurrentItem() { currentItem = null; }
+    protected void resetCurrentItem() {
+        currentItem = null;
+    }
 
     protected void setScenarioStep(String step) {
         log.info("Entering step [{}]", step);
@@ -204,32 +243,105 @@ public abstract class AbstractScenario implements Scenario {
 
     // ── Result helpers ────────────────────────────────────────────────────────
 
-    protected void setResultOK()                                     { result = ScenarioResult.OK; }
-    protected void setResultOK(String message)                       { result = ScenarioResult.OK;   setMessage(message); }
-    protected void setResultNotOK()                                  { result = ScenarioResult.NOT_OK; }
-    protected void setResultNotOK(String message, String detail)     { result = ScenarioResult.NOT_OK; setMessage(message); setDetail(detail); }
-    protected void setResultPartial()                                { result = ScenarioResult.PARTIAL; }
-    protected void setResultFailedInit()                             { result = ScenarioResult.FAILED_INIT; }
-    protected void setResultFailedInit(String message, String detail){ result = ScenarioResult.FAILED_INIT; setMessage(message); setDetail(detail); }
+    protected void setResultOK() {
+        result = ScenarioResult.OK;
+    }
 
-    protected void setMessage(String msg)    { log.info("Message: {}", msg);    this.message = msg; }
-    protected void setDetail(String detail)  { log.info("Detail: {}", detail);  this.detail  = detail; }
+    protected void setResultOK(String message) {
+        result = ScenarioResult.OK;
+        setMessage(message);
+    }
+
+    protected void setResultNotOK() {
+        result = ScenarioResult.NOT_OK;
+    }
+
+    protected void setResultNotOK(String message, String detail) {
+        result = ScenarioResult.NOT_OK;
+        setMessage(message);
+        setDetail(detail);
+    }
+
+    protected void setResultPartial() {
+        result = ScenarioResult.PARTIAL;
+    }
+
+    protected void setResultFailedInit() {
+        result = ScenarioResult.FAILED_INIT;
+    }
+
+    protected void setResultFailedInit(String message, String detail) {
+        result = ScenarioResult.FAILED_INIT;
+        setMessage(message);
+        setDetail(detail);
+    }
+
+    protected void setMessage(String msg) {
+        log.info("Message: {}", msg);
+        this.message = msg;
+    }
+
+    protected void setDetail(String detail) {
+        log.info("Detail: {}", detail);
+        this.detail = detail;
+    }
 
     // ── Counter helpers ───────────────────────────────────────────────────────
 
-    protected int getTotal()   { return counters.getTotal(); }
-    protected int getSuccess() { return counters.getSuccess(); }
-    protected int getFail()    { return counters.getFail(); }
+    protected int getTotal() {
+        return counters.getTotal();
+    }
 
-    protected void increaseTotal()               { counters.increaseTotal();  log.debug("total={}", getTotal()); }
-    protected void increaseTotal(int n)          { counters.increaseTotal(n); log.debug("total={}", getTotal()); }
-    protected void decreaseTotal()               { counters.decreaseTotal();  log.debug("total={}", getTotal()); }
-    protected void increaseSuccess()             { counters.increaseSuccess(); log.debug("success={}", getSuccess()); }
-    protected void increaseSuccess(int n)        { counters.increaseSuccess(n); log.debug("success={}", getSuccess()); }
-    protected void increaseFail()                { counters.increaseFail();   log.debug("fail={}", getFail()); }
-    protected void increaseFail(int n)           { counters.increaseFail(n);  log.debug("fail={}", getFail()); }
-    protected void calculateFail()               { counters.calculateFail(); }
-    protected void calculateTotal()              { counters.calculateTotal(); }
+    protected int getSuccess() {
+        return counters.getSuccess();
+    }
+
+    protected int getFail() {
+        return counters.getFail();
+    }
+
+    protected void increaseTotal() {
+        counters.increaseTotal();
+        log.debug("total={}", getTotal());
+    }
+
+    protected void increaseTotal(int n) {
+        counters.increaseTotal(n);
+        log.debug("total={}", getTotal());
+    }
+
+    protected void decreaseTotal() {
+        counters.decreaseTotal();
+        log.debug("total={}", getTotal());
+    }
+
+    protected void increaseSuccess() {
+        counters.increaseSuccess();
+        log.debug("success={}", getSuccess());
+    }
+
+    protected void increaseSuccess(int n) {
+        counters.increaseSuccess(n);
+        log.debug("success={}", getSuccess());
+    }
+
+    protected void increaseFail() {
+        counters.increaseFail();
+        log.debug("fail={}", getFail());
+    }
+
+    protected void increaseFail(int n) {
+        counters.increaseFail(n);
+        log.debug("fail={}", getFail());
+    }
+
+    protected void calculateFail() {
+        counters.calculateFail();
+    }
+
+    protected void calculateTotal() {
+        counters.calculateTotal();
+    }
 
     protected void setCounts(int total, int success, int fail) {
         counters.setTotal(total);

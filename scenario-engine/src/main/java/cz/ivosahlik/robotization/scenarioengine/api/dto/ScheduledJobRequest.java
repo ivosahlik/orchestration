@@ -37,7 +37,9 @@ public record ScheduledJobRequest(
 
         List<ProcessingStepDef> processingSteps
 ) {
-    /** Convert request to domain object for persistence. */
+    /**
+     * Convert request to domain object for persistence.
+     */
     public ScheduledJob toScheduledJob() {
         ScheduledJob job = new ScheduledJob();
         job.setName(name);

@@ -11,6 +11,8 @@ public record EngineProperties(
         boolean recoverOnStart
 ) {
     public EngineProperties {
-        if (checkIntervalMs <= 0) checkIntervalMs = 1_000L;
+        if (checkIntervalMs <= 0) {
+            checkIntervalMs = 1_000L;
+        }
     }
 }

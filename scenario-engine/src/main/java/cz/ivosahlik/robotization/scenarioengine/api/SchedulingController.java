@@ -4,6 +4,7 @@ import cz.ivosahlik.robotization.scenarioengine.api.dto.ScheduledJobRequest;
 import cz.ivosahlik.robotization.scenarioengine.domain.ScheduledJob;
 import cz.ivosahlik.robotization.scenarioengine.scheduling.SchedulingService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,15 +22,12 @@ import java.util.List;
  * </pre>
  */
 @Slf4j
+@RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/jobs")
 public class SchedulingController {
 
     private final SchedulingService schedulingService;
-
-    public SchedulingController(SchedulingService schedulingService) {
-        this.schedulingService = schedulingService;
-    }
 
     @GetMapping
     public List<ScheduledJob> listAll() {
