@@ -8,7 +8,6 @@ import cz.ivosahlik.robotization.scenarioengine.reporting.ReportingService;
 import cz.ivosahlik.robotization.scenarioengine.repository.ScenarioExecutionRepository;
 import cz.ivosahlik.robotization.scenarioengine.scenario.AbstractScenario;
 import cz.ivosahlik.robotization.scenarioengine.scenario.Scenario;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
