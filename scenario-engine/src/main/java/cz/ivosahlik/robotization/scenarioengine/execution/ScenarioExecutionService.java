@@ -12,7 +12,9 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.net.InetAddress;
@@ -68,7 +70,8 @@ public class ScenarioExecutionService {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     // Application Ready Event?
-    @PostConstruct
+//    @PostConstruct
+    @EventListener(ApplicationReadyEvent.class)
     void start() {
         if (engineProps.recoverOnStart()) {
             recoverStuckScenarios();
@@ -87,14 +90,19 @@ public class ScenarioExecutionService {
 
     @PreDestroy
     void stop() {
-        dispatcher.shutdown();
-        try {
-            if (!dispatcher.awaitTermination(30, TimeUnit.SECONDS)) {
+        log.info("Stopping ScenarioExecutionService...");
+        if (dispatcher != null) {
+            dispatcher.shutdown();
+            try {
+                if (!dispatcher.awaitTermination(30, TimeUnit.SECONDS)) {
+                    log.warn("Dispatcher did not terminate in time. Forcing shutdown.");
+                    dispatcher.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                log.warn("Shutdown interrupted. Forcing shutdown.");
                 dispatcher.shutdownNow();
+                Thread.currentThread().interrupt();
             }
-        } catch (InterruptedException e) {
-            dispatcher.shutdownNow();
-            Thread.currentThread().interrupt();
         }
         log.info("ScenarioExecutionService stopped. {} scenario(s) were still running.", running.size());
     }
